@@ -1,0 +1,22 @@
+[project]
+name = "hight2vdm"
+version = "0.1.0"
+description = "hight to vdm"
+authors = [{name = "harayoki"}]
+dependencies = []
+
+[project.optional-dependencies]
+
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+hoge = "hight2vdm.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
