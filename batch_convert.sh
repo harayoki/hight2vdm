@@ -30,7 +30,7 @@ fi
 # 出力フォルダがなければ作成
 mkdir -p "$OUTPUT_DIR"
 
-# Python スクリプトのパス（必要に応じて変更）
+# Python スクリプトのパス
 SCRIPT="python src/height2vdm/cli.py"
 
 # 入力ファイルを処理
