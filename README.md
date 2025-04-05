@@ -5,7 +5,7 @@ It is a simple tool that takes a heightmap and generates a VDM texture.
 ハイトマップ（アルファテクスチャ）をベクターディスプレイスメントマップに変換します。
 テーパーづけやサイドのスムージングを行い、綺麗ですこしリッチなベクターディスプレイスメントマップを生成します。
 
-# Usage
+## Usage
 
 ```
 Usage: cli.py [OPTIONS] INPUT_PATH OUTPUT_PATH
@@ -21,12 +21,23 @@ Options:
   --help                          Show this message and exit.
 ```
 
-# Example
+## Example
 
 ```
-python cli.py -ss 0.5 1.0 --gamma 2.2 input.png output.vdm
+python src/height2vdm/cli.py -ss 0.5 1.0 --gamma 2.2 input.png output.vdm
 ```
 
-Zが低い部分のXYスケールを0.5倍、Zが高い部分のテーパーをXYスケールを1.0倍にして、テーパーのあるVDMを生成します。
+Create a VDM with a taper by setting the XY scale to 0.5 times for low Z and 1.0 times for high Z.
 
+Zが低い部分のXYスケールを0.5倍、Zが高い部分のテーパーをXYスケールを1.0倍にして、テーパーのあるVDMを生成します。 
+
+## batch convert
+
+Convert all tif (and other formats) images in a folder to VDMs.
+
+あるフォルダ内のtif（＋その他フォーマット）画像全てをハイトマップとして読み込みしてフォルダに一括コンバートします。
+
+```
+./batch_convert.sh -i input_dir -o output_dir -e tif
+```
 
