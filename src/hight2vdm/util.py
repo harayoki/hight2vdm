@@ -67,7 +67,6 @@ def save_vdm_exr(vdm: np.ndarray, path: str) -> None:
     R = vdm[:, :, 0].astype(np.float32).tobytes()
     G = vdm[:, :, 1].astype(np.float32).tobytes()
     B = vdm[:, :, 2].astype(np.float32).tobytes()
-
     exr = OpenEXR.OutputFile(path, header)
     exr.writePixels({'R': R, 'G': G, 'B': B})
     exr.close()
@@ -90,6 +89,7 @@ def create_base_mesh(shape: Tuple[int, int]) -> np.ndarray:
         indexing='ij'
     )
     base_mesh = np.stack([x_coords, y_coords, np.zeros_like(x_coords)], axis=-1)
+    print(f"Base mesh shape: {base_mesh.shape}")
     return base_mesh.astype(np.float32)
 
 
@@ -108,7 +108,6 @@ def apply_vdm(base_mesh: np.ndarray, vdm: np.ndarray) -> np.ndarray:
 
 
 def update_vdm_with_difference(
-    original_vdm: np.ndarray,
     base_mesh: np.ndarray,
     modified_vertices: np.ndarray
 ) -> np.ndarray:
@@ -123,6 +122,7 @@ def update_vdm_with_difference(
     Returns:
         np.ndarray: 更新されたVDM (H, W, 3)
     """
-    delta = modified_vertices - (base_mesh + original_vdm)
-    return original_vdm + delta
-
+    new_vdm = modified_vertices - base_mesh
+    # yを反転
+    new_vdm[..., 1] = -new_vdm[..., 1]
+    return new_vdm

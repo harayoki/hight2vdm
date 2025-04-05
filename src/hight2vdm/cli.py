@@ -2,27 +2,33 @@ import click
 from scipy.ndimage import label, gaussian_filter
 import numpy as np
 import time
+import os
 from util import (load_heightmap, save_vdm_exr, height_to_vdm,
                    create_base_mesh, apply_vdm, update_vdm_with_difference)
 
 
-# メッシュブラー
-def blur_mesh(
+# メッシュブラー（グループ周辺だけ）
+def blur_mesh_around_groups(
     mesh: np.ndarray,
+    mask: np.ndarray,
     sigma: float = 4.0,
 ) -> None:
-    # mesh[..., 0] = gaussian_filter(mesh[..., 0], sigma=sigma)
-    # mesh[..., 1] = gaussian_filter(mesh[..., 1], sigma=sigma)
-    mesh[..., 2] = gaussian_filter(mesh[..., 2], sigma=sigma)
+    # Z成分だけ処理
+    z = mesh[..., 2]
+    blurred = gaussian_filter(z * mask, sigma=sigma)
+    mask_blur = gaussian_filter(mask.astype(float), sigma=sigma)
+    mask_blur[mask_blur == 0] = 1  # ゼロ除算防止
+    mesh[..., 2] = blurred / mask_blur
 
 
 # メッシュ変形１
 def shrink_positive_z_groups(
     mesh: np.ndarray,
-    a: float = 0.1,
-    b: float = 4.0,
-    gamma: float = 1.0
-) -> None:
+    a: float = 1.0,
+    b: float = 2.0,
+    gamma: float = 1.0,
+    enable_shrink: bool = True,
+) -> np.ndarray:
     """
     Z変位が正の領域をグループ化し、各グループをXY重心中心に縮小する。
 
@@ -31,13 +37,23 @@ def shrink_positive_z_groups(
         a (float): Z=0のときの縮小率
         b (float): Z=1のときの縮小率
         gamma (float): 補間のガンマ係数（デフォルト: 1.0 で直線）
+        enable_shrink (bool): 縮小処理を有効にするかどうか
 
     Returns:
-        np.ndarray: 変形後のメッシュ (H, W, 3)
+        np.ndarray: グループマスク (H, W)
     """
-    z_positive_mask = mesh[..., 2] > 0
+    blurred_z = gaussian_filter(mesh[..., 2], sigma=2.0)
+    z_positive_mask: np.ndarray = blurred_z > 0
     structure = np.ones((3, 3), dtype=bool)  # 8近傍
     labeled, num_labels = label(z_positive_mask, structure=structure)
+
+    # グループ周辺だけのマスクを作る
+    group_mask = np.zeros(mesh.shape[:2], dtype=bool)
+    group_mask[z_positive_mask] = True
+
+    if not enable_shrink:
+        return group_mask
+
     for label_id in range(1, num_labels + 1):
         mask = labeled == label_id
         indices = np.argwhere(mask)
@@ -52,115 +68,39 @@ def shrink_positive_z_groups(
 
         # XY重心
         center = xy_points.mean(axis=0)
+        print(f"グループ {label_id} のXY重心: {center}")
 
         # 補間された縮小率をZごとに計算
         t = np.clip(z_values, 0.0, 1.0)
         weights = a * (1 - t**gamma) + b * (t**gamma)  # 補間
 
-        # XY位置を中心から縮小
-        new_xy = center + (xy_points - center) * weights[:, np.newaxis]
+        # ベクトル計算
+        diff = xy_points - center
+        # diff[:, 1] *= -1.0  # Y方向だけベクトル反転
+
+        # center中心にweightだけ半径をかける
+        new_xy = center + diff * weights[:, np.newaxis]
+
         mesh[mask, 0] = new_xy[:, 0]
-        mesh[mask, 1] = -new_xy[:, 1]
+        mesh[mask, 1] = new_xy[:, 1]
 
-
-# def compute_vdm_laplacian(
-#     heightmap: np.ndarray,
-#     iterations: int = 1,
-#     lambda_factor: float = 0.2,
-#     use_8_neighbors: bool = False,
-#     preserve_volume: bool = False,
-#     use_normalized: bool = False,
-#     mask: np.ndarray | None = None,
-#     use_step1: bool = False,
-#     use_step2: bool = False,
-#     use_step3: bool = False
-# ):
-#     heightmap: np.ndarray,
-#     iterations: int = 1,
-#     lambda_factor: float = 0.2,
-#     use_8_neighbors: bool = False,
-#     preserve_volume: bool = False,
-#     use_normalized: bool = False,
-#     mask: np.ndarray | None = None
-# ) -> np.ndarray:
-#     h, w = heightmap.shape
-#     if use_step1:
-#         return height_to_vdm(heightmap)
-#
-#     current = heightmap.copy()
-#     vdm = np.zeros((h, w, 3), dtype=np.float32)
-#
-#     if use_normalized:
-#         # 広めの正規化カーネル（5x5）
-#         kernel = np.array([
-#             [1/np.sqrt(8), 1/np.sqrt(5), 1.0, 1/np.sqrt(5), 1/np.sqrt(8)],
-#             [1/np.sqrt(5), 1/np.sqrt(2), 1.0, 1/np.sqrt(2), 1/np.sqrt(5)],
-#             [1.0,          1.0,         0.0, 1.0,          1.0         ],
-#             [1/np.sqrt(5), 1/np.sqrt(2), 1.0, 1/np.sqrt(2), 1/np.sqrt(5)],
-#             [1/np.sqrt(8), 1/np.sqrt(5), 1.0, 1/np.sqrt(5), 1/np.sqrt(8)]
-#         ], dtype=np.float32)
-#         kernel /= kernel.sum()
-#     else:
-#         if use_8_neighbors:
-#             kernel = np.array([[1, 1, 1],
-#                                [1, 0, 1],
-#                                [1, 1, 1]], dtype=np.float32)
-#             kernel = kernel / 8.0
-#         else:
-#             kernel = np.array([[0, 1, 0],
-#                                [1, 0, 1],
-#                                [0, 1, 0]], dtype=np.float32)
-#             kernel = kernel / 4.0
-#
-#     if mask is None:
-#         mask = np.ones_like(heightmap, dtype=np.float32)
-#
-#     for _ in range(iterations):
-#         avg = convolve(current, kernel, mode='reflect')
-#         laplacian = avg - current
-#         if preserve_volume:
-#             laplacian *= -1
-#         current += lambda_factor * laplacian * mask
-#
-#         # スムージング処理（step2）
-#     if use_step2:
-#         blur_kernel = np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]], dtype=np.float32)
-#         blur_kernel /= blur_kernel.sum()
-#         current = convolve(current, blur_kernel, mode='reflect')
-#
-#     dx = (np.roll(current, -1, axis=1) - np.roll(current, 1, axis=1)) * 0.5
-#     dy = (np.roll(current, -1, axis=0) - np.roll(current, 1, axis=0)) * 0.5
-#     dz = current  # - heightmap
-#
-#     vdm[:, :, 0] = dx
-#     vdm[:, :, 1] = dy
-#     vdm[:, :, 2] = dz
-#
-#     # step3: VDM適用後の座標に基づいてXY方向ラプラシアンを追加
-#     if use_step3:
-#         pos_x = np.arange(w)[None, :] + vdm[:, :, 0]
-#         pos_y = np.arange(h)[:, None] + vdm[:, :, 1]
-#         pos_z = vdm[:, :, 2]
-#         pos = pos_z  # Zだけを見る
-#         blur = convolve(pos, kernel, mode='reflect')
-#         diff = (blur - pos) * lambda_factor
-#         vdm[:, :, 2] += diff
-#
-#     return vdm
+    return group_mask
 
 @click.command()
 @click.argument("input_path", type=click.Path(exists=True))
 @click.argument("output_path", type=click.Path())
-@click.option("--iterations", "-i", default=1, help="平滑化の繰り返し回数")
-@click.option("--lambda-factor", "-l", default=0.2, help="平滑化強度（正：なだらか／負：シャープ）")
-@click.option("--use-8-neighbors", "-n", is_flag=True, help="8近傍を使う（デフォルトは4近傍）")
-@click.option("--preserve-volume", "-v", is_flag=True, help="体積を保持する（膨張を防ぐ）")
-@click.option("--use-normalized", "-u", is_flag=True, help="距離正規化した重み付き平均を使う")
+@click.option(
+    "-ss",
+    "--shrink-scales",
+    type=(float, float),
+    default=(1.0, 1.5),
+    help="shrink scales（Z0, Z1）",
+)
+@click.option("--gamma", type=float, default=1.0, help="補間のガンマ係数")
 @click.option("--no-smooth", is_flag=True, help="XY成分のギザギザ緩和を無効にする")
-@click.option("--no-laplacian", is_flag=True, help="VDM適用後のラプラシアン追加を無効にする")
-def cli(input_path, output_path, iterations, lambda_factor, use_8_neighbors, preserve_volume, use_normalized, no_smooth, no_laplacian):
+@click.option("--no-shrink", is_flag=True, help="Zシュリンク処理を無効にする")
+def cli(input_path, output_path, shrink_scales, gamma, no_smooth, no_shrink):
 
-    print(f"読み込み: {input_path}")
     height_map = load_heightmap(input_path)
 
     print("処理開始")
@@ -177,28 +117,32 @@ def cli(input_path, output_path, iterations, lambda_factor, use_8_neighbors, pre
 
     # 編集処理
     edited_mesh = displaced_mesh.copy()
-    blur_mesh(edited_mesh)
-    shrink_positive_z_groups(edited_mesh)
+
+    # グループマスクを先に取得
+    group_mask = shrink_positive_z_groups(edited_mesh, enable_shrink=False)
+
+    if not no_smooth:
+        blur_mesh_around_groups(edited_mesh, group_mask)
+
+    # 必要に応じてシュリンク処理
+    if not no_shrink:
+        shrink_positive_z_groups(
+            edited_mesh,
+            a=shrink_scales[0],
+            b=shrink_scales[1],
+            gamma=gamma,
+            enable_shrink=True)
 
     # 新しいVDMの生成（差分を加算）
-    updated_vdm = update_vdm_with_difference(initial_vdm, base_mesh, edited_mesh)
-
-    # if not (no_smooth and no_laplacian):
-    #     vertices = compulte_vertices(vdm_map)
-    #     vertices_work = copy_vertices(vertices)
-    #
-    #     if not no_smooth:
-    #         vertices_work = smooth_xy(vertices_work)
-    #
-    #     if not no_laplacian:
-    #         vertices_work = compute_vdm_laplacian(vertices_work)
-    #
-    #     diff = diff_vertices(vertices, vertices_work)
-    #
-    #     vdm_map = apply_vdm_map_diff(vdm_map, diff)
+    updated_vdm = update_vdm_with_difference(base_mesh, edited_mesh)
 
     elapsed = time.time() - start
     print(f"処理完了（{elapsed:.2f}秒）")
+
+    if os.path.isdir(output_path):
+        # 出力先がディレクトリの場合は、ファイル名を付けて保存
+        base_name = os.path.splitext(os.path.basename(input_path))[0]
+        output_path = os.path.join(output_path, f"{base_name}_vdm.exr")
 
     print(f"保存: {output_path}")
     save_vdm_exr(updated_vdm, output_path)
