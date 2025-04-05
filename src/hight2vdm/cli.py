@@ -1,6 +1,5 @@
 import click
 from scipy.ndimage import label, gaussian_filter
-from scipy.ndimage import binary_erosion
 import numpy as np
 import time
 import os
@@ -43,14 +42,9 @@ def shrink_positive_z_groups(
     Returns:
         np.ndarray: グループマスク (H, W)
     """
-    original_z = mesh[..., 2].copy()  # 元のZを保存
-    z_positive_mask: np.ndarray = original_z > 0
-    z_positive_mask = binary_erosion(z_positive_mask, structure=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
-
-    # structure = np.ones((3, 3), dtype=bool)  # 8近傍
-    structure = np.array([[0, 1, 0],
-                          [1, 1, 1],
-                          [0, 1, 0]], dtype=bool) # 4近傍
+    blurred_z = gaussian_filter(mesh[..., 2], sigma=2.0)
+    z_positive_mask: np.ndarray = blurred_z > 0
+    structure = np.ones((3, 3), dtype=bool)  # 8近傍
     labeled, num_labels = label(z_positive_mask, structure=structure)
 
     # グループ周辺だけのマスクを作る
@@ -100,16 +94,19 @@ def shrink_positive_z_groups(
     "--shrink-scales",
     type=(float, float),
     default=(1.0, 1.5),
-    help="shrink scales（Z0, Z1）",
+    help="Shrink scales（Z0, Z1） / シュリンクスケール（Z0, Z1）",
 )
-@click.option("--gamma", type=float, default=1.0, help="補間のガンマ係数")
-@click.option("--no-smooth", is_flag=True, help="XY成分のギザギザ緩和を無効にする")
-@click.option("--no-shrink", is_flag=True, help="Zシュリンク処理を無効にする")
+@click.option("--gamma", type=float, default=1.0,
+              help="Gamma coefficient for interpolate / シュリンク補間のガンマ係数")
+@click.option("--no-smooth", is_flag=True,
+              help="Disable smoothing of XY components / XY成分のギザギザ緩和を無効にする")
+@click.option("--no-shrink", is_flag=True,
+              help="Disable Z shrink processing / Zシュリンク処理を無効にする")
 def cli(input_path, output_path, shrink_scales, gamma, no_smooth, no_shrink):
 
     height_map = load_heightmap(input_path)
 
-    print("処理開始")
+    # print("処理開始")
     start = time.time()
 
     initial_vdm = height_to_vdm(height_map)  # R&Gチャンネルは0 Bチャンネルは0~1
@@ -143,14 +140,14 @@ def cli(input_path, output_path, shrink_scales, gamma, no_smooth, no_shrink):
     updated_vdm = update_vdm_with_difference(base_mesh, edited_mesh)
 
     elapsed = time.time() - start
-    print(f"処理完了（{elapsed:.2f}秒）")
+    print(f"Finished（{elapsed:.2f}秒）")
 
     if os.path.isdir(output_path):
         # 出力先がディレクトリの場合は、ファイル名を付けて保存
         base_name = os.path.splitext(os.path.basename(input_path))[0]
         output_path = os.path.join(output_path, f"{base_name}_vdm.exr")
 
-    print(f"保存: {output_path}")
+    print(f"save as '{output_path}'")
     save_vdm_exr(updated_vdm, output_path)
 
 
