@@ -1,5 +1,6 @@
 import click
 from scipy.ndimage import label, gaussian_filter
+from scipy.ndimage import binary_erosion
 import numpy as np
 import time
 import os
@@ -42,9 +43,14 @@ def shrink_positive_z_groups(
     Returns:
         np.ndarray: グループマスク (H, W)
     """
-    blurred_z = gaussian_filter(mesh[..., 2], sigma=2.0)
-    z_positive_mask: np.ndarray = blurred_z > 0
-    structure = np.ones((3, 3), dtype=bool)  # 8近傍
+    original_z = mesh[..., 2].copy()  # 元のZを保存
+    z_positive_mask: np.ndarray = original_z > 0
+    z_positive_mask = binary_erosion(z_positive_mask, structure=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]]))
+
+    # structure = np.ones((3, 3), dtype=bool)  # 8近傍
+    structure = np.array([[0, 1, 0],
+                          [1, 1, 1],
+                          [0, 1, 0]], dtype=bool) # 4近傍
     labeled, num_labels = label(z_positive_mask, structure=structure)
 
     # グループ周辺だけのマスクを作る
